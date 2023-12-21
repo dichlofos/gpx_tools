@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 
+"""
+GPX Tools
+
+GPX Tracks merge/filtering/deduplicating tool
+Written by Mikhail Veltishchev.
+
+Kudos: Yulia Yaneeva for filtering idea and initial implementation.
+"""
+
 import typing as tp
 import tqdm
 import shutil
 from pathlib import Path
 
 import glob
-import tqdm
 import os
 import sys
 import argparse
@@ -39,10 +47,17 @@ def _get_time(point):
 def _get_track_list(output_file_name, current_directory=".") -> tp.List[str]:
     glob_path = os.path.join(current_directory, "*.gpx")
     output_path = Path(output_file_name).resolve()
-    return sorted(file_name for file_name in glob.glob(glob_path) if Path(file_name).resolve() != output_path)
+    return sorted(
+        file_name for file_name in glob.glob(glob_path)
+        if Path(file_name).resolve() != output_path
+    )
 
 
-def _merge_tracks(left_file_name: str, right_file_name: str, output_file_name: tp.Optional[str]=None) -> None:
+def _merge_tracks(
+    left_file_name: str,
+    right_file_name: str,
+    output_file_name: tp.Optional[str]=None,
+) -> None:
     """
     Merge `right_file_name` track data into `left_file_name` track data
     """
@@ -125,19 +140,35 @@ def _filter_duplicates(input_file_name: str, output_file_name: str=None) -> None
     if point_count - len(all_timestamps) != removed_point_count:
         raise Exception("Removed point count does not match, please report to script author. ")
 
-    print(f"Filtered {removed_point_count} points from {point_count} and {len(all_timestamps)} points remaining")
+    print(
+        f"Filtered {removed_point_count} points from {point_count} "
+        "and {len(all_timestamps)} points remaining"
+    )
 
     ET.indent(tree, space="    ")
     tree.write(output_file_name, encoding="UTF-8")
 
 
 def main():
+    """
+    GPX Tools Entry Point
+    """
     ET.register_namespace("g", _NS)
     ET.register_namespace("", _NS)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-o", "--output", help="Output track name", required=False, default="_output.gpx")
-    parser.add_argument("-n", "--dry-run", help="Dry run: do not write anything, just calc some stats", required=False, default=False)
+    parser.add_argument(
+        "-o", "--output",
+        help="Output track name",
+        required=False,
+        default="_output.gpx",
+    )
+    parser.add_argument(
+        "-n", "--dry-run",
+        help="Dry run: do not write anything, just calc some stats",
+        required=False,
+        default=False,
+    )
 
     args = parser.parse_args()
     output_file_name = args.output
