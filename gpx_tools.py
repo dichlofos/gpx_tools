@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
 import typing as tp
-from pathlib import Path
+import tqdm
 import shutil
+from pathlib import Path
 
 import glob
 import tqdm
@@ -10,13 +11,15 @@ import os
 import sys
 import argparse
 
-import xml.etree.ElementTree as ET
+from xml import etree
+from xml.etree import ElementTree as ET
 from geopy import distance as gd
 
 
 _DISTANCE_THRESHOLD = 10
 
 _NS = "http://www.topografix.com/GPX/1/1"
+_GNS = {"g": _NS}
 
 
 def _get_elevation(point):
@@ -33,13 +36,13 @@ def _get_time(point):
     return ""
 
 
-def _get_track_list(output_file_name, current_directory="."):
+def _get_track_list(output_file_name, current_directory=".") -> tp.List[str]:
     glob_path = os.path.join(current_directory, "*.gpx")
     output_path = Path(output_file_name).resolve()
     return sorted(file_name for file_name in glob.glob(glob_path) if Path(file_name).resolve() != output_path)
 
 
-def _merge_tracks(left_file_name: str, right_file_name: str, output_file_name: tp.Optional[str]=None):
+def _merge_tracks(left_file_name: str, right_file_name: str, output_file_name: tp.Optional[str]=None) -> None:
     """
     Merge `right_file_name` track data into `left_file_name` track data
     """
@@ -52,13 +55,15 @@ def _merge_tracks(left_file_name: str, right_file_name: str, output_file_name: t
     right_tree = ET.parse(right_file_name)
     left_root = left_tree.getroot()
     right_root = right_tree.getroot()
-    ns = {"g": _NS}
 
-    all_left_trks = left_root.findall("g:trk", ns)
+    all_left_trks = left_root.findall("g:trk", _GNS)
     if len(all_left_trks) > 1:
-        raise Exception(f"More than one `trk` in file {left_file_name}. ")
+        raise Exception(
+            f"More than one `trk` in file {left_file_name}, "
+            "GPX seems to be invalid. Please report to author. "
+        )
 
-    right_segments = right_root.findall("g:trk/g:trkseg", ns)
+    right_segments = right_root.findall("g:trk/g:trkseg", _GNS)
 
     main_trk = None
     if all_left_trks:
@@ -79,14 +84,51 @@ def _merge_tracks(left_file_name: str, right_file_name: str, output_file_name: t
         print("No track info found")
 
     added_waypoints = 0
-    for wpt in right_root.iterfind("g:wpt", ns):
+    for wpt in right_root.iterfind("g:wpt", _GNS):
         added_waypoints += 1
         left_root.append(wpt)
 
     print(f"Merged {added_waypoints} waypoints")
 
+    ET.indent(left_tree, space="    ")
     left_tree.write(output_file_name, encoding="UTF-8")
 
+
+def _filter_duplicates(input_file_name: str, output_file_name: str=None) -> None:
+    """
+    Remove duplicated points from track
+    """
+    if output_file_name is None:
+        output_file_name = input_file_name
+
+    tree = ET.parse(input_file_name)
+    root = tree.getroot()
+
+    all_timestamps = set()
+
+    point_count = 0
+    removed_point_count = 0
+    # remove duplicate points
+    for track_segment in root.iterfind("g:trk/g:trkseg", _GNS):
+        for point in track_segment.findall("g:trkpt", _GNS):
+            time = _get_time(point)
+            point_count += 1
+            if time in all_timestamps:
+                removed_point_count += 1
+                track_segment.remove(point)
+                continue
+
+            all_timestamps.add(time)
+
+    print(len(all_timestamps), point_count, removed_point_count)
+    # sanity check
+    if point_count - len(all_timestamps) != removed_point_count:
+        raise Exception("Removed point count does not match, please report to script author. ")
+
+    print(f"Filtered {removed_point_count} points from {point_count} and {len(all_timestamps)} points remaining")
+
+    ET.indent(tree, space="    ")
+    tree.write(output_file_name, encoding="UTF-8")
 
 
 def main():
@@ -118,22 +160,9 @@ def main():
                 right_file_name=track_name,
             )
 
-    sys.exit(1)
-
-    all_times = set()
-
-
-
-
+    _filter_duplicates(output_file_name)
 
     sys.exit(1)
-
-    if len(sys.argv) < 3:
-        print(f"Usage: {sys.argv[0]} <input_track.gpx> <output_track.gpx>")
-        sys.exit(1)
-
-    input_file_name = sys.argv[1]
-    output_file_name = sys.argv[2]
 
     if not os.path.exists(input_file_name):
         print(f"Error: File `{input_file_name}` not found")
@@ -144,11 +173,9 @@ def main():
 
 
     # track_segment - родительские элементы для точек разделённых участков трека
-    # т.е. перебираем все ветви <trgseg>...</trkseg>
+    # т.е. перебираем все ветви <trkseg>...</trkseg>
 
     ns = {"g": _NS}
-    root.iterfind("g:trk/g:trkseg", ns)
-
     point_count = 0
     # remove duplicate points
     for track_segment in tqdm.tqdm(root.iterfind("g:trk/g:trkseg", ns)):
@@ -175,7 +202,7 @@ def main():
 
         elevation_prev = _get_elevation(prev_point)
 
-        # Удалим из дерева элементов все точки, расстояние можду которыми
+        # Удалим из дерева элементов все точки, расстояние между которыми
         # меньше 20м. Исключение - перепад высоты больше 1м
         first = True
         for point in track_segment.findall("g:trkpt", ns):
