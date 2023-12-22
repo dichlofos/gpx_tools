@@ -30,6 +30,13 @@ _NS = "http://www.topografix.com/GPX/1/1"
 _GNS = {"g": _NS}
 
 
+def _write_gpx(output_file_name: str, tree: ET):
+    """Write formatted GPX to file"""
+    print(f"Writing GPX to {output_file_name}...")
+    ET.indent(tree, space="    ")
+    tree.write(output_file_name, encoding="UTF-8")
+
+
 def _get_elevation(point):
     elevation_elem = point.find("{*}ele")
     if elevation_elem is not None:
@@ -90,8 +97,8 @@ def _merge_tracks(
     if main_trk is not None:
         # merge tracks
         added_segments = 0
-        for trkseg in right_segments:
-            main_trk.append(trkseg)
+        for right_track_segment in right_segments:
+            main_trk.append(right_track_segment)
             print("  Added segment to main track")
             added_segments += 1
         print(f"Merged {added_segments} segments")
@@ -104,9 +111,7 @@ def _merge_tracks(
         left_root.append(wpt)
 
     print(f"Merged {added_waypoints} waypoints")
-
-    ET.indent(left_tree, space="    ")
-    left_tree.write(output_file_name, encoding="UTF-8")
+    _write_gpx(output_file_name, left_tree)
 
 
 def _filter_duplicates(input_file_name: str, output_file_name: str=None) -> None:
@@ -131,22 +136,85 @@ def _filter_duplicates(input_file_name: str, output_file_name: str=None) -> None
             if time in all_timestamps:
                 removed_point_count += 1
                 track_segment.remove(point)
+                # TODO: empty segments can remain
                 continue
 
             all_timestamps.add(time)
 
-    print(len(all_timestamps), point_count, removed_point_count)
     # sanity check
     if point_count - len(all_timestamps) != removed_point_count:
         raise Exception("Removed point count does not match, please report to script author. ")
 
     print(
         f"Filtered {removed_point_count} points from {point_count} "
-        "and {len(all_timestamps)} points remaining"
+        f"and {len(all_timestamps)} points remaining"
     )
+    _write_gpx(output_file_name, tree)
 
-    ET.indent(tree, space="    ")
-    tree.write(output_file_name, encoding="UTF-8")
+
+def _smooth_track(
+    input_file_name: str,
+    output_file_name: str|None=None,
+    distance_treshold=_DISTANCE_THRESHOLD,
+) -> None:
+    """
+    Remove too close points
+    """
+    if output_file_name is None:
+        output_file_name = input_file_name
+
+    tree = ET.parse(input_file_name)
+    root = tree.getroot()
+
+    for track_segment in root.iterfind("g:trk/g:trkseg", _GNS):
+
+        # Найдём lat, lon и ele (если есть, иначе 0) первой точки участка
+        prev_point = track_segment.find("g:trkpt", _GNS)
+        latitude_prev = prev_point.get("lat")
+        longitude_prev = prev_point.get("lon")
+
+        elevation_prev = _get_elevation(prev_point)
+
+        # Удалим из дерева элементов все точки, расстояние между которыми
+        # меньше  . Исключение - перепад высоты больше 1м
+        first = True
+        for point in track_segment.findall("g:trkpt", _GNS):
+            if first:
+                # пропускаем первую точку
+                first = False
+                continue
+
+            latitude = point.get("lat")
+            longitude = point.get("lon")
+            time = _get_time(point)
+            elevation = _get_elevation(point)
+
+            elevation_delta = abs(elevation - elevation_prev)
+            if elevation_delta > 1:
+                elevation_prev = elevation
+                continue
+            if elevation_delta > 50:
+                print(f"Warning: {elevation_delta} is too high")
+
+            # Считаем расстояние между точками
+            mark1 = latitude_prev, longitude_prev
+            mark2 = latitude, longitude
+            distance = gd.geodesic(mark1, mark2, ellipsoid="WGS-84").m
+
+            if distance < _DISTANCE_THRESHOLD:
+                # print("removed point")
+                track_segment.remove(point)
+            else:
+                latitude_prev = latitude
+                longitude_prev = longitude
+                elevation_prev = elevation
+
+    _write_gpx(output_file_name, tree)
+
+
+def _exit(message):
+    print(message)
+    sys.exit(1)
 
 
 def main():
@@ -157,6 +225,13 @@ def main():
     ET.register_namespace("", _NS)
 
     parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "-i", "--input",
+        help="Input file names (comma-separated)",
+        required=False,
+        default=None,
+    )
     parser.add_argument(
         "-o", "--output",
         help="Output track name",
@@ -168,6 +243,14 @@ def main():
         help="Dry run: do not write anything, just calc some stats",
         required=False,
         default=False,
+        action="store_true",
+    )
+    parser.add_argument(
+        "-s", "--smooth",
+        help="Apply smoothing to output track",
+        required=False,
+        default=False,
+        action="store_true",
     )
 
     args = parser.parse_args()
@@ -176,14 +259,22 @@ def main():
     if not args.dry_run:
         Path(output_file_name).unlink(missing_ok=True)
 
-    track_file_names = _get_track_list(output_file_name)
+    track_file_names = []
+    if args.input:
+        if not os.path.exists(args.input):
+            _exit(f"File {args.input} does not exist")
+        track_file_names = [args.input]
+    else:
+        track_file_names = _get_track_list(output_file_name)
+
     print("Source files:")
     for track in track_file_names:
         print(f"  Source: {track}")
 
-    if len(track_file_names) > 2:
-        # copy first track "as is"
-        shutil.copy(track_file_names[0], output_file_name)
+    # copy first track "as is"
+    shutil.copy(track_file_names[0], output_file_name)
+
+    if len(track_file_names) > 1:
         # merge all other tracks into it
         for track_name in track_file_names[1:]:
             _merge_tracks(
@@ -193,80 +284,8 @@ def main():
 
     _filter_duplicates(output_file_name)
 
-    sys.exit(1)
-
-    if not os.path.exists(input_file_name):
-        print(f"Error: File `{input_file_name}` not found")
-        sys.exit(2)
-
-    tree = ET.parse(input_file_name)
-    root = tree.getroot()
-
-
-    # track_segment - родительские элементы для точек разделённых участков трека
-    # т.е. перебираем все ветви <trkseg>...</trkseg>
-
-    ns = {"g": _NS}
-    point_count = 0
-    # remove duplicate points
-    for track_segment in tqdm.tqdm(root.iterfind("g:trk/g:trkseg", ns)):
-        for point in track_segment.findall("g:trkpt", ns):
-            time = _get_time(point)
-            # print(time)
-            point_count += 1
-            if time in all_times:
-                assert False
-                track_segment.remove(point)
-                # print("removed")
-                continue
-
-            all_times.add(time)
-
-    print(f"Enumerated {len(all_times)} unique points from {point_count}")
-
-    for track_segment in tqdm.tqdm(root.iterfind("g:trk/g:trkseg", ns)):
-
-        # Найдём lat, lon и ele (если есть, иначе 0) первой точки участка
-        prev_point = track_segment.find("g:trkpt", ns)
-        latitude_prev = prev_point.get("lat")
-        longitude_prev = prev_point.get("lon")
-
-        elevation_prev = _get_elevation(prev_point)
-
-        # Удалим из дерева элементов все точки, расстояние между которыми
-        # меньше 20м. Исключение - перепад высоты больше 1м
-        first = True
-        for point in track_segment.findall("g:trkpt", ns):
-            if first:
-                # пропускаем первую точку
-                first = False
-                continue
-
-            latitude = point.get("lat")
-            longitude = point.get("lon")
-            elevation = _get_elevation(point)
-
-            elevation_delta = abs(elevation - elevation_prev)
-            if elevation_delta > 1:
-                elevation_prev = elevation
-                continue
-
-            # Считаем расстояние между точками
-            mark1 = latitude_prev, longitude_prev
-            mark2 = latitude, longitude
-            distance = gd.geodesic(mark1, mark2, ellipsoid="WGS-84").m
-
-            if distance < _DISTANCE_THRESHOLD:
-                # print("removed point")
-                # track_segment.remove(point)
-                pass
-            else:
-                latitude_prev = latitude
-                longitude_prev = longitude
-                elevation_prev = elevation
-
-    # Записываем новый xml-документ на основе полученного дерева
-    tree.write(output_file_name, encoding="UTF-8")
+    if args.smooth:
+        _smooth_track(input_file_name=output_file_name)
 
 
 if __name__ == "__main__":
