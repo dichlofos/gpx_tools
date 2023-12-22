@@ -24,7 +24,7 @@ from xml.etree import ElementTree as ET
 from geopy import distance as gd
 
 
-_DISTANCE_THRESHOLD = 10
+_DISTANCE_THRESHOLD = 20
 
 _NS = "http://www.topografix.com/GPX/1/1"
 _GNS = {"g": _NS}
@@ -129,7 +129,8 @@ def _filter_duplicates(input_file_name: str, output_file_name: str=None) -> None
     point_count = 0
     removed_point_count = 0
     # remove duplicate points
-    for track_segment in root.iterfind("g:trk/g:trkseg", _GNS):
+    trk = root.find("g:trk", _GNS)
+    for track_segment in trk.findall("g:trkseg", _GNS):
         for point in track_segment.findall("g:trkpt", _GNS):
             time = _get_time(point)
             point_count += 1
@@ -140,6 +141,12 @@ def _filter_duplicates(input_file_name: str, output_file_name: str=None) -> None
                 continue
 
             all_timestamps.add(time)
+
+        # check whether at least one point remains in segment
+        if not track_segment.findall("g:trkpt", _GNS):
+            # remove empty segment
+            trk.remove(track_segment)
+            break
 
     # sanity check
     if point_count - len(all_timestamps) != removed_point_count:
@@ -165,6 +172,8 @@ def _smooth_track(
 
     tree = ET.parse(input_file_name)
     root = tree.getroot()
+
+    removed_point_count = 0
 
     for track_segment in root.iterfind("g:trk/g:trkseg", _GNS):
 
@@ -193,6 +202,7 @@ def _smooth_track(
             if elevation_delta > 1:
                 elevation_prev = elevation
                 continue
+
             if elevation_delta > 50:
                 print(f"Warning: {elevation_delta} is too high")
 
@@ -202,12 +212,14 @@ def _smooth_track(
             distance = gd.geodesic(mark1, mark2, ellipsoid="WGS-84").m
 
             if distance < _DISTANCE_THRESHOLD:
-                # print("removed point")
+                removed_point_count += 1
                 track_segment.remove(point)
             else:
                 latitude_prev = latitude
                 longitude_prev = longitude
                 elevation_prev = elevation
+
+    print(f"Smoothed {removed_point_count} points")
 
     _write_gpx(output_file_name, tree)
 
