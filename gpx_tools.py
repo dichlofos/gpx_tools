@@ -121,6 +121,8 @@ def _filter_duplicates(input_file_name: str, output_file_name: str=None) -> None
     if output_file_name is None:
         output_file_name = input_file_name
 
+    print(f"Filter duplicates from {input_file_name} to {output_file_name}")
+
     tree = ET.parse(input_file_name)
     root = tree.getroot()
 
@@ -134,10 +136,10 @@ def _filter_duplicates(input_file_name: str, output_file_name: str=None) -> None
         for point in track_segment.findall("g:trkpt", _GNS):
             time = _get_time(point)
             point_count += 1
+
             if time in all_timestamps:
                 removed_point_count += 1
                 track_segment.remove(point)
-                # TODO: empty segments can remain
                 continue
 
             all_timestamps.add(time)
@@ -146,7 +148,6 @@ def _filter_duplicates(input_file_name: str, output_file_name: str=None) -> None
         if not track_segment.findall("g:trkpt", _GNS):
             # remove empty segment
             trk.remove(track_segment)
-            break
 
     # sanity check
     if point_count - len(all_timestamps) != removed_point_count:
@@ -173,6 +174,7 @@ def _smooth_track(
     tree = ET.parse(input_file_name)
     root = tree.getroot()
 
+    point_count = 0
     removed_point_count = 0
 
     for track_segment in root.iterfind("g:trk/g:trkseg", _GNS):
@@ -211,15 +213,19 @@ def _smooth_track(
             mark2 = latitude, longitude
             distance = gd.geodesic(mark1, mark2, ellipsoid="WGS-84").m
 
-            if distance < _DISTANCE_THRESHOLD:
+            if distance > 100:
+                print("anomaly distance", time, distance)
+
+            if distance < 30:
                 removed_point_count += 1
                 track_segment.remove(point)
             else:
                 latitude_prev = latitude
                 longitude_prev = longitude
                 elevation_prev = elevation
+                point_count += 1
 
-    print(f"Smoothed {removed_point_count} points")
+    print(f"Smoothed {removed_point_count} points, {point_count} remains")
 
     _write_gpx(output_file_name, tree)
 
