@@ -25,6 +25,7 @@ from geopy import distance as gd
 
 
 _DISTANCE_THRESHOLD = 20
+_SMOOTH_POINT_COUNT = 10
 
 _NS = "http://www.topografix.com/GPX/1/1"
 _GNS = {"g": _NS}
@@ -160,10 +161,33 @@ def _filter_duplicates(input_file_name: str, output_file_name: str=None) -> None
     _write_gpx(output_file_name, tree)
 
 
+class Point:
+    def __init__(self, node: ET):
+        self.node = node
+        self.ele = _get_elevation(node)
+        self.lat = float(node.get("lat"))
+        self.lon = float(node.get("lon"))
+
+
+class Segment:
+    def __init__(
+        self,
+        first: Point,
+        last: Point,
+    ):
+        self.first = first
+        self.last = last
+
+        first_point = first.lat, first.lon
+        last_point = last.lat, last.lon
+        self.distance = gd.geodesic(first_point, last_point, ellipsoid="WGS-84").m
+
+
+
 def _smooth_track(
     input_file_name: str,
     output_file_name: str|None=None,
-    distance_treshold=_DISTANCE_THRESHOLD,
+    distance_threshold=_DISTANCE_THRESHOLD,
 ) -> None:
     """
     Remove too close points
@@ -178,52 +202,28 @@ def _smooth_track(
     removed_point_count = 0
 
     for track_segment in root.iterfind("g:trk/g:trkseg", _GNS):
+        last_points = []
 
-        # Найдём lat, lon и ele (если есть, иначе 0) первой точки участка
-        prev_point = track_segment.find("g:trkpt", _GNS)
-        latitude_prev = prev_point.get("lat")
-        longitude_prev = prev_point.get("lon")
+        for node_point  in track_segment.findall("g:trkpt", _GNS):
+            point_count += 1
+            point = Point(node_point)
 
-        elevation_prev = _get_elevation(prev_point)
-
-        # Удалим из дерева элементов все точки, расстояние между которыми
-        # меньше  . Исключение - перепад высоты больше 1м
-        first = True
-        for point in track_segment.findall("g:trkpt", _GNS):
-            if first:
-                # пропускаем первую точку
-                first = False
+            if len(last_points) < _SMOOTH_POINT_COUNT:
+                last_points.append(point)
                 continue
 
-            latitude = point.get("lat")
-            longitude = point.get("lon")
-            time = _get_time(point)
-            elevation = _get_elevation(point)
-
-            elevation_delta = abs(elevation - elevation_prev)
-            if elevation_delta > 1:
-                elevation_prev = elevation
+            # enough points to smooth
+            if Segment(last_points[0], last_points[-1]).distance < distance_threshold:
+                # remove entire segment except one point
+                for p in last_points[1:]:
+                    track_segment.remove(p.node)
+                    removed_point_count += 1
+                last_points = last_points[0:1]
                 continue
 
-            if elevation_delta > 50:
-                print(f"Warning: {elevation_delta} is too high")
-
-            # Считаем расстояние между точками
-            mark1 = latitude_prev, longitude_prev
-            mark2 = latitude, longitude
-            distance = gd.geodesic(mark1, mark2, ellipsoid="WGS-84").m
-
-            if distance > 100:
-                print("anomaly distance", time, distance)
-
-            if distance < 30:
-                removed_point_count += 1
-                track_segment.remove(point)
-            else:
-                latitude_prev = latitude
-                longitude_prev = longitude
-                elevation_prev = elevation
-                point_count += 1
+            # shift script
+            last_points = last_points[1:]
+            last_points.append(point)
 
     print(f"Smoothed {removed_point_count} points, {point_count} remains")
 
