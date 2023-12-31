@@ -25,7 +25,7 @@ from geopy import distance as gd
 
 
 _DISTANCE_THRESHOLD = 20
-_SMOOTH_POINT_COUNT = 10
+_SMOOTH_POINT_COUNT = 5
 
 _NS = "http://www.topografix.com/GPX/1/1"
 _GNS = {"g": _NS}
@@ -100,7 +100,7 @@ def _merge_tracks(
         added_segments = 0
         for right_track_segment in right_segments:
             main_trk.append(right_track_segment)
-            print("  Added segment to main track")
+            # print("  Added segment to main track")
             added_segments += 1
         print(f"Merged {added_segments} segments")
     else:
@@ -165,6 +165,7 @@ class Point:
     def __init__(self, node: ET):
         self.node = node
         self.ele = _get_elevation(node)
+        self.time = _get_time(node)
         self.lat = float(node.get("lat"))
         self.lon = float(node.get("lon"))
 
@@ -183,11 +184,11 @@ class Segment:
         self.distance = gd.geodesic(first_point, last_point, ellipsoid="WGS-84").m
 
 
-
 def _smooth_track(
     input_file_name: str,
     output_file_name: str|None=None,
     distance_threshold=_DISTANCE_THRESHOLD,
+    smooth_point_count=_SMOOTH_POINT_COUNT,
 ) -> None:
     """
     Remove too close points
@@ -208,7 +209,7 @@ def _smooth_track(
             point_count += 1
             point = Point(node_point)
 
-            if len(last_points) < _SMOOTH_POINT_COUNT:
+            if len(last_points) < smooth_point_count:
                 last_points.append(point)
                 continue
 
@@ -225,7 +226,11 @@ def _smooth_track(
             last_points = last_points[1:]
             last_points.append(point)
 
-    print(f"Smoothed {removed_point_count} points, {point_count} remains")
+    remaining_point_count = point_count - removed_point_count
+    print(
+        f"Smoothed {removed_point_count} points, "
+        f"{remaining_point_count} remains at {smooth_point_count}"
+    )
 
     _write_gpx(output_file_name, tree)
 
@@ -257,6 +262,12 @@ def main():
         default="_output.gpx",
     )
     parser.add_argument(
+        "-c", "--smooth-point-count",
+        help="Smooth point count",
+        required=False,
+        default=str(_SMOOTH_POINT_COUNT),
+    )
+    parser.add_argument(
         "-n", "--dry-run",
         help="Dry run: do not write anything, just calc some stats",
         required=False,
@@ -273,6 +284,16 @@ def main():
 
     args = parser.parse_args()
     output_file_name = args.output
+
+    smooth_point_count = None
+    if args.smooth_point_count:
+        try:
+            smooth_point_count = int(args.smooth_point_count)
+            # point count implies smoothing
+            args.smooth = True
+        except Exception as e:
+            print(f"Smooth point count must be integer value: {e}")
+            sys.exit(1)
 
     if not args.dry_run:
         Path(output_file_name).unlink(missing_ok=True)
@@ -303,7 +324,10 @@ def main():
     _filter_duplicates(output_file_name)
 
     if args.smooth:
-        _smooth_track(input_file_name=output_file_name)
+        _smooth_track(
+            input_file_name=output_file_name,
+            smooth_point_count=smooth_point_count,
+        )
 
 
 if __name__ == "__main__":
