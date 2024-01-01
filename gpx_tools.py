@@ -169,6 +169,9 @@ class Point:
         self.lat = float(node.get("lat"))
         self.lon = float(node.get("lon"))
 
+    def __str__(self):
+        return f"{self.time}: {self.ele:10.02f} {self.lat:16.08f} {self.lon:16.08f}"
+
 
 class Segment:
     def __init__(
@@ -209,22 +212,33 @@ def _smooth_track(
             point_count += 1
             point = Point(node_point)
 
+            # print(f"{point}")
+
+            last_points.append(point)
+            # print(f"ADD {point}")
+
             if len(last_points) < smooth_point_count:
-                last_points.append(point)
                 continue
 
             # enough points to smooth
-            if Segment(last_points[0], last_points[-1]).distance < distance_threshold:
+            delta = Segment(last_points[0], last_points[-1])
+            diff = delta.distance
+            # print(f"DISTANCE {diff:10.03f}")
+            if diff < distance_threshold:
                 # remove entire segment except one point
                 for p in last_points[1:]:
                     track_segment.remove(p.node)
                     removed_point_count += 1
+                    # print(f"REMOVE {p.time}")
+
                 last_points = last_points[0:1]
+                # print(f"{last_points[0]} LEFT")
                 continue
 
             # shift script
             last_points = last_points[1:]
-            last_points.append(point)
+            # print(f"SHIFT to {last_points[0]}")
+            # last_points.append(point)  # bug was here
 
     remaining_point_count = point_count - removed_point_count
     print(
