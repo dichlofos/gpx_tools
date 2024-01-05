@@ -253,6 +253,56 @@ def _smooth_track(
     _write_gpx(output_file_name, tree)
 
 
+def _split_by_days(input_file_name: str, output_file_name: str=None) -> None:
+    """
+    Split track by days
+    """
+    if output_file_name is None:
+        output_file_name = input_file_name
+
+    print(f"Split track by days {input_file_name} to {output_file_name}")
+
+    tree = ET.parse(input_file_name)
+    root = tree.getroot()
+
+    all_timestamps = set()
+
+    # find min/max times
+    trk = root.find("g:trk", _GNS)
+    for track_segment in trk.findall("g:trkseg", _GNS):
+        for point in track_segment.findall("g:trkpt", _GNS):
+            time = _get_time(point)
+            all_timestamps.add(time)
+
+    timestamps = list(sorted(all_timestamps))
+    dates = list(sorted(set(
+        t[0:10]
+        for t in timestamps
+    )))
+    print(dates)
+
+    for date in dates:
+        tree = ET.parse(input_file_name)
+        root = tree.getroot()
+
+        # remove points
+        trk = root.find("g:trk", _GNS)
+        for track_segment in trk.findall("g:trkseg", _GNS):
+            for point in track_segment.findall("g:trkpt", _GNS):
+                time = _get_time(point)
+
+                if not time.startswith(date):
+                    track_segment.remove(point)
+                    continue
+
+            # check whether at least one point remains in segment
+            if not track_segment.findall("g:trkpt", _GNS):
+                # remove empty segment
+                trk.remove(track_segment)
+
+        _write_gpx(f"{output_file_name}_{date}.gpx", tree)
+
+
 def _exit(message):
     print(message)
     sys.exit(1)
@@ -301,6 +351,13 @@ def main():
     parser.add_argument(
         "-s", "--smooth",
         help="Apply smoothing to output track",
+        required=False,
+        default=False,
+        action="store_true",
+    )
+    parser.add_argument(
+        "-p", "--split",
+        help="Split track by days",
         required=False,
         default=False,
         action="store_true",
@@ -360,6 +417,12 @@ def main():
             input_file_name=output_file_name,
             smooth_point_count=smooth_point_count,
             distance_threshold=distance_threshold,
+        )
+
+    if args.split:
+        _split_by_days(
+            input_file_name=output_file_name,
+            output_file_name=f"{output_file_name}_split",
         )
 
 
