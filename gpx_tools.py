@@ -102,7 +102,8 @@ def _merge_tracks(
             main_trk.append(right_track_segment)
             # print("  Added segment to main track")
             added_segments += 1
-        print(f"Merged {added_segments} segments")
+        if added_segments:
+            print(f"Merged {added_segments} segments")
     else:
         print("No track info found")
 
@@ -111,7 +112,9 @@ def _merge_tracks(
         added_waypoints += 1
         left_root.append(wpt)
 
-    print(f"Merged {added_waypoints} waypoints")
+    if added_waypoints:
+        print(f"Merged {added_waypoints} waypoints")
+
     _write_gpx(output_file_name, left_tree)
 
 
