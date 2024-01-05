@@ -24,7 +24,7 @@ from xml.etree import ElementTree as ET
 from geopy import distance as gd
 
 
-_DISTANCE_THRESHOLD = 20
+_DISTANCE_THRESHOLD = 15
 _SMOOTH_POINT_COUNT = 5
 
 _NS = "http://www.topografix.com/GPX/1/1"
@@ -225,13 +225,14 @@ def _smooth_track(
             diff = delta.distance
             # print(f"DISTANCE {diff:10.03f}")
             if diff < distance_threshold:
+                assert len(last_points) > 2, "Not enough points"
                 # remove entire segment except one point
-                for p in last_points[1:]:
+                for p in last_points[1:-1]:
                     track_segment.remove(p.node)
                     removed_point_count += 1
                     # print(f"REMOVE {p.time}")
 
-                last_points = last_points[0:1]
+                last_points = [last_points[0], last_points[-1]]
                 # print(f"{last_points[0]} LEFT")
                 continue
 
@@ -282,6 +283,12 @@ def main():
         default=str(_SMOOTH_POINT_COUNT),
     )
     parser.add_argument(
+        "-d", "--distance-threshold",
+        help="Smooth distance threshold",
+        required=False,
+        default=str(_DISTANCE_THRESHOLD)
+    )
+    parser.add_argument(
         "-n", "--dry-run",
         help="Dry run: do not write anything, just calc some stats",
         required=False,
@@ -300,14 +307,22 @@ def main():
     output_file_name = args.output
 
     smooth_point_count = None
-    if args.smooth_point_count:
-        try:
-            smooth_point_count = int(args.smooth_point_count)
-            # point count implies smoothing
-            args.smooth = True
-        except Exception as e:
-            print(f"Smooth point count must be integer value: {e}")
-            sys.exit(1)
+    distance_threshold = None
+
+    if args.smooth:
+        if args.smooth_point_count:
+            try:
+                smooth_point_count = int(args.smooth_point_count)
+            except Exception as e:
+                print(f"Smooth point count must be integer value: {e}")
+                sys.exit(1)
+
+        if args.distance_threshold:
+            try:
+                distance_threshold = int(args.distance_threshold)
+            except Exception as e:
+                print(f"Distance threshold must be integer value: {e}")
+                sys.exit(1)
 
     if not args.dry_run:
         Path(output_file_name).unlink(missing_ok=True)
@@ -341,6 +356,7 @@ def main():
         _smooth_track(
             input_file_name=output_file_name,
             smooth_point_count=smooth_point_count,
+            distance_threshold=distance_threshold,
         )
 
 
