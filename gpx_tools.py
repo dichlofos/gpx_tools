@@ -275,15 +275,17 @@ def _split_by_days(input_file_name: str, output_file_name: str=None) -> None:
             all_timestamps.add(time)
 
     timestamps = list(sorted(all_timestamps))
-    dates = list(sorted(set(
-        t[0:10]
-        for t in timestamps
-    )))
-    print(dates)
+    dates = list(sorted(set(t[0:10] for t in timestamps)))
+    # print(dates)
 
     for date in dates:
         tree = ET.parse(input_file_name)
         root = tree.getroot()
+
+        for wpt in root.findall("g:wpt", _GNS):
+            time = _get_time(wpt)
+            if not time.startswith(date):
+                root.remove(wpt)
 
         # remove points
         trk = root.find("g:trk", _GNS)
