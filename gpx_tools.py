@@ -10,16 +10,15 @@ Kudos: Yulia Yaneeva for filtering idea and initial implementation.
 """
 
 import typing as tp
-import tqdm
-import shutil
-from pathlib import Path
-
 import glob
 import os
 import sys
 import argparse
 
-from xml import etree
+# import tqdm
+import shutil
+
+from pathlib import Path
 from xml.etree import ElementTree as ET
 from geopy import distance as gd
 
@@ -29,6 +28,22 @@ _SMOOTH_POINT_COUNT = 5
 
 _NS = "http://www.topografix.com/GPX/1/1"
 _GNS = {"g": _NS}
+
+
+class GPX:
+    """GPX Parser"""
+    def __init__(input_file_name: str):
+        self._tree = ET.parse(input_file_name)
+        self._root = self.tree.getroot()
+
+    @property
+    def tree(self):
+        return self._tree
+
+    @property
+    def root(self):
+        return self._root
+
 
 
 def _write_gpx(output_file_name: str, tree: ET):
@@ -81,7 +96,7 @@ def _merge_tracks(
 
     all_left_trks = left_root.findall("g:trk", _GNS)
     if len(all_left_trks) > 1:
-        raise Exception(
+        raise ValueError(
             f"More than one `trk` in file {left_file_name}, "
             "GPX seems to be invalid. Please report to author. "
         )
@@ -165,6 +180,7 @@ def _filter_duplicates(input_file_name: str, output_file_name: str=None) -> None
 
 
 class Point:
+    """Parsed GPX point"""
     def __init__(self, node: ET):
         self.node = node
         self.ele = _get_elevation(node)
@@ -177,6 +193,7 @@ class Point:
 
 
 class Segment:
+    """Pair of parsed track points: segment"""
     def __init__(
         self,
         first: Point,
@@ -188,6 +205,10 @@ class Segment:
         first_point = first.lat, first.lon
         last_point = last.lat, last.lon
         self.distance = gd.geodesic(first_point, last_point, ellipsoid="WGS-84").m
+
+    def length(self):
+        """Segment length"""
+        return self.distance
 
 
 def _smooth_track(
@@ -230,8 +251,8 @@ def _smooth_track(
             if diff < distance_threshold:
                 assert len(last_points) > 2, "Not enough points"
                 # remove entire segment except one point
-                for p in last_points[1:-1]:
-                    track_segment.remove(p.node)
+                for last_point in last_points[1:-1]:
+                    track_segment.remove(last_point.node)
                     removed_point_count += 1
                     # print(f"REMOVE {p.time}")
 
@@ -310,6 +331,17 @@ def _exit(message):
     sys.exit(1)
 
 
+def _parse_track_file_names(input_file_name, output_file_name):
+    track_file_names = []
+    if input_file_name:
+        if not os.path.exists(input_file_name):
+            _exit(f"File {input_file_name} does not exist")
+        track_file_names = [input_file_name]
+    else:
+        track_file_names = _get_track_list(output_file_name)
+    return track_file_names
+
+
 def main():
     """
     GPX Tools Entry Point
@@ -375,31 +407,26 @@ def main():
         if args.smooth_point_count:
             try:
                 smooth_point_count = int(args.smooth_point_count)
-            except Exception as e:
-                print(f"Smooth point count must be integer value: {e}")
+            except ValueError as exc:
+                print(f"Smooth point count must be integer value: {exc}")
                 sys.exit(1)
 
         if args.distance_threshold:
             try:
                 distance_threshold = int(args.distance_threshold)
-            except Exception as e:
-                print(f"Distance threshold must be integer value: {e}")
+            except ValueError as exc:
+                print(f"Distance threshold must be integer value: {exc}")
                 sys.exit(1)
 
     if not args.dry_run:
         Path(output_file_name).unlink(missing_ok=True)
 
-    track_file_names = []
-    if args.input:
-        if not os.path.exists(args.input):
-            _exit(f"File {args.input} does not exist")
-        track_file_names = [args.input]
-    else:
-        track_file_names = _get_track_list(output_file_name)
+    track_file_names = _parse_track_file_names(args.input, output_file_name)
 
     print("Source files:")
     for track in track_file_names:
         print(f"  Source: {track}")
+
 
     # copy first track "as is"
     shutil.copy(track_file_names[0], output_file_name)
