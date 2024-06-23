@@ -14,6 +14,8 @@ import glob
 import os
 import sys
 import argparse
+import datetime
+import hashlib
 
 # import tqdm
 import shutil
@@ -63,6 +65,18 @@ def _get_elevation(point):
 def _get_time(point):
     time_elem = point.find("{*}time")
     if time_elem is not None:
+        if "1970-01-01T00:00:0" in time_elem.text:
+            # calculate fake time
+            lat = point.get("lat")
+            lon = point.get("lon")
+            m = hashlib.sha256()
+            m.update(lat.encode("utf-8"))
+            m.update(lon.encode("utf-8"))
+            point_int_hash = int(m.hexdigest()[0:4], 16)
+            fake_time = datetime.datetime.utcfromtimestamp(point_int_hash)
+            # print(fake_time)
+            return fake_time
+
         return time_elem.text
     return ""
 
